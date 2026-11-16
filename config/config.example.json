@@ -1,0 +1,16 @@
+{
+  "environment": "<dev|prod>",
+  "catalog_name": "<unity-catalog-name>",
+  "volume_base": "/Volumes/<catalog>/source/volume",
+  "neon": {
+    "host": "<neon-host>.neon.tech",
+    "port": "5432",
+    "database": "<database-name>"
+  },
+  "secret_scope": "banking-scope",
+  "notification": {
+    "sender_email": "<sender>@gmail.com",
+    "recipient_email": "<recipient>@gmail.com"
+  },
+  "_note": "Non-secret settings only. Credentials (neon-username, neon-password, gmail_app_password) live ONLY in the 'banking-scope' Databricks secret scope and are never stored in this repository."
+}
