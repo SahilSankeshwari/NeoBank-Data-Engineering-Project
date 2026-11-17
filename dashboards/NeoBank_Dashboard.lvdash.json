@@ -1,0 +1,2507 @@
+{
+  "datasets": [
+    {
+      "name": "customers_mv",
+      "displayName": "Customers (deduplicated)",
+      "config": {
+        "source": "SELECT customer_id, customer_name, branch_name, total_balance, total_transactions, credit_score, risk_grade, customer_segment FROM banking.gold.customer_360 QUALIFY ROW_NUMBER() OVER (PARTITION BY customer_id ORDER BY total_balance DESC, total_transactions DESC) = 1",
+        "measures": [
+          {
+            "name": "customer_count",
+            "expr": "COUNT(1)"
+          },
+          {
+            "name": "total_deposits",
+            "expr": "SUM(total_balance)",
+            "format": {
+              "type": "number",
+              "abbreviation": "compact",
+              "decimalPlaces": {
+                "type": "exact",
+                "places": 2.0
+              }
+            }
+          },
+          {
+            "name": "total_transactions",
+            "expr": "SUM(total_transactions)"
+          },
+          {
+            "name": "avg_customer_balance",
+            "expr": "AVG(total_balance)",
+            "format": {
+              "type": "number",
+              "abbreviation": "compact",
+              "decimalPlaces": {
+                "type": "exact",
+                "places": 2.0
+              }
+            }
+          },
+          {
+            "name": "avg_customer_transactions",
+            "expr": "AVG(total_transactions)",
+            "format": {
+              "type": "number",
+              "decimalPlaces": {
+                "type": "exact",
+                "places": 1.0
+              }
+            }
+          },
+          {
+            "name": "high_risk_customers",
+            "expr": "COUNT(1) FILTER (WHERE risk_grade = 'HIGH')"
+          }
+        ],
+        "version": "1.1",
+        "comment": "One row per customer, deduplicated from banking.gold.customer_360 (the source table contains ~5 exact duplicate rows per customer)",
+        "dimensions": [
+          {
+            "name": "customer_id",
+            "expr": "customer_id"
+          },
+          {
+            "name": "customer_name",
+            "expr": "customer_name"
+          },
+          {
+            "name": "branch_name",
+            "expr": "branch_name"
+          },
+          {
+            "name": "risk_grade",
+            "expr": "risk_grade"
+          },
+          {
+            "name": "customer_segment",
+            "expr": "customer_segment"
+          },
+          {
+            "name": "balance_band",
+            "expr": "CASE\n  WHEN total_balance < 100000 THEN '1. Under 100K'\n  WHEN total_balance < 500000 THEN '2. 100K - 500K'\n  WHEN total_balance < 1000000 THEN '3. 500K - 1M'\n  WHEN total_balance < 5000000 THEN '4. 1M - 5M'\n  ELSE '5. 5M and above'\nEND",
+            "comment": "Band of the customer's total balance across all accounts"
+          }
+        ]
+      }
+    },
+    {
+      "name": "top_customers_mv",
+      "displayName": "Top Customers by Balance",
+      "config": {
+        "source": "SELECT customer_id, customer_name, branch_name, risk_grade, customer_segment, total_balance, total_transactions FROM banking.gold.customer_360 QUALIFY ROW_NUMBER() OVER (PARTITION BY customer_id ORDER BY total_balance DESC, total_transactions DESC) = 1 ORDER BY total_balance DESC LIMIT 10",
+        "measures": [
+          {
+            "name": "total_balance",
+            "expr": "SUM(total_balance)",
+            "format": {
+              "type": "number",
+              "abbreviation": "compact",
+              "decimalPlaces": {
+                "type": "exact",
+                "places": 2.0
+              }
+            }
+          },
+          {
+            "name": "total_transactions",
+            "expr": "SUM(total_transactions)"
+          }
+        ],
+        "version": "1.1",
+        "comment": "Top 10 customers by total balance, deduplicated to one row per customer",
+        "dimensions": [
+          {
+            "name": "customer_id",
+            "expr": "customer_id"
+          },
+          {
+            "name": "customer_name",
+            "expr": "customer_name"
+          },
+          {
+            "name": "branch_name",
+            "expr": "branch_name"
+          },
+          {
+            "name": "risk_grade",
+            "expr": "risk_grade"
+          }
+        ]
+      }
+    },
+    {
+      "name": "branch_perf_mv",
+      "displayName": "Branch Performance (corrected)",
+      "config": {
+        "source": "SELECT branch_name,\n       COUNT(1) AS customers,\n       SUM(total_balance) AS deposits,\n       SUM(total_transactions) AS transactions,\n       COUNT_IF(risk_grade = 'HIGH') AS high_risk_customers\nFROM (\n  SELECT customer_id, branch_name, total_balance, total_transactions, risk_grade\n  FROM banking.gold.customer_360\n  QUALIFY ROW_NUMBER() OVER (PARTITION BY customer_id ORDER BY total_balance DESC, total_transactions DESC) = 1\n) GROUP BY branch_name ORDER BY deposits DESC",
+        "measures": [
+          {
+            "name": "customers",
+            "expr": "SUM(customers)"
+          },
+          {
+            "name": "deposits",
+            "expr": "SUM(deposits)",
+            "format": {
+              "type": "number",
+              "abbreviation": "compact",
+              "decimalPlaces": {
+                "type": "exact",
+                "places": 2.0
+              }
+            }
+          },
+          {
+            "name": "transactions",
+            "expr": "SUM(transactions)"
+          },
+          {
+            "name": "avg_customer_balance",
+            "expr": "SUM(deposits) / NULLIF(SUM(customers), 0)",
+            "format": {
+              "type": "number",
+              "abbreviation": "compact",
+              "decimalPlaces": {
+                "type": "exact",
+                "places": 2.0
+              }
+            }
+          },
+          {
+            "name": "high_risk_customers",
+            "expr": "SUM(high_risk_customers)"
+          }
+        ],
+        "version": "1.1",
+        "comment": "Branch performance derived from deduplicated customer_360 rows. Note - banking.gold.branch_performance itself reports deposits and transactions inflated ~5x by duplicate customer rows.",
+        "dimensions": [
+          {
+            "name": "branch_name",
+            "expr": "branch_name"
+          }
+        ]
+      }
+    },
+    {
+      "name": "channel_mv",
+      "displayName": "Channel Transactions",
+      "config": {
+        "source": "banking.gold.transaction_channel_summary",
+        "measures": [
+          {
+            "name": "total_transactions",
+            "expr": "SUM(total_transactions)"
+          },
+          {
+            "name": "successful_transactions",
+            "expr": "SUM(successful_transactions)"
+          },
+          {
+            "name": "failed_transactions",
+            "expr": "SUM(failed_transactions)"
+          },
+          {
+            "name": "unclassified_transactions",
+            "expr": "SUM(total_transactions - successful_transactions - failed_transactions)",
+            "comment": "Transactions whose outcome is neither success nor failure (pending or unknown status)"
+          },
+          {
+            "name": "success_rate",
+            "expr": "SUM(successful_transactions) / NULLIF(SUM(total_transactions), 0)",
+            "format": {
+              "type": "percentage",
+              "decimalPlaces": {
+                "type": "exact",
+                "places": 2.0
+              }
+            }
+          },
+          {
+            "name": "failure_rate",
+            "expr": "SUM(failed_transactions) / NULLIF(SUM(total_transactions), 0)",
+            "format": {
+              "type": "percentage",
+              "decimalPlaces": {
+                "type": "exact",
+                "places": 2.0
+              }
+            }
+          },
+          {
+            "name": "avg_processing_time_ms",
+            "expr": "SUM(total_transactions * avg_processing_time_ms) / NULLIF(SUM(total_transactions), 0)",
+            "format": {
+              "type": "number",
+              "decimalPlaces": {
+                "type": "exact",
+                "places": 1.0
+              }
+            }
+          }
+        ],
+        "version": "1.1",
+        "comment": "Daily transaction channel summary by gateway and device type, January 2024 through January 2025",
+        "dimensions": [
+          {
+            "name": "txn_month",
+            "expr": "DATE_TRUNC('MONTH', txn_date)",
+            "format": {
+              "type": "date",
+              "dateFormat": "locale_short_month"
+            }
+          },
+          {
+            "name": "gateway_name",
+            "expr": "gateway_name"
+          },
+          {
+            "name": "device_type",
+            "expr": "device_type"
+          }
+        ]
+      }
+    }
+  ],
+  "pages": [
+    {
+      "name": "4a1ddf2d",
+      "displayName": "Executive Dashboard",
+      "layout": [
+        {
+          "widget": {
+            "name": "total-customers",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "customers_mv",
+                  "fields": [
+                    {
+                      "name": "measure(customer_count)",
+                      "expression": "MEASURE(`customer_count`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": "Total Customers"
+              },
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "measure(customer_count)",
+                  "rowNumber": 0
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 3,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "total-deposits",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "customers_mv",
+                  "fields": [
+                    {
+                      "name": "measure(total_deposits)",
+                      "expression": "MEASURE(`total_deposits`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": "Total Deposits"
+              },
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "measure(total_deposits)",
+                  "rowNumber": 0
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 3,
+            "y": 0,
+            "width": 3,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "total-transactions",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "customers_mv",
+                  "fields": [
+                    {
+                      "name": "measure(total_transactions)",
+                      "expression": "MEASURE(`total_transactions`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": "Total Transactions (Customer Lifetime)"
+              },
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "measure(total_transactions)",
+                  "rowNumber": 0
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 0,
+            "width": 3,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "high-risk-customers",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "customers_mv",
+                  "fields": [
+                    {
+                      "name": "measure(high_risk_customers)",
+                      "expression": "MEASURE(`high_risk_customers`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": "High-Risk Customers"
+              },
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "measure(high_risk_customers)",
+                  "rowNumber": 0
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 9,
+            "y": 0,
+            "width": 3,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "monthly-txn-trend",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "channel_mv",
+                  "fields": [
+                    {
+                      "name": "txn_month",
+                      "expression": "`txn_month`"
+                    },
+                    {
+                      "name": "measure(total_transactions)",
+                      "expression": "MEASURE(`total_transactions`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": "Monthly Transaction Volume (Channel Summary)"
+              },
+              "version": 3,
+              "widgetType": "line",
+              "encodings": {
+                "x": {
+                  "fieldName": "txn_month",
+                  "displayName": "txn_month",
+                  "scale": {
+                    "type": "temporal"
+                  }
+                },
+                "y": {
+                  "fieldName": "measure(total_transactions)",
+                  "displayName": "total_transactions",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 3,
+            "width": 8,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "monthly-success-rate",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "channel_mv",
+                  "fields": [
+                    {
+                      "name": "txn_month",
+                      "expression": "`txn_month`"
+                    },
+                    {
+                      "name": "measure(success_rate)",
+                      "expression": "MEASURE(`success_rate`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": "Monthly Success Rate"
+              },
+              "version": 3,
+              "widgetType": "line",
+              "encodings": {
+                "x": {
+                  "fieldName": "txn_month",
+                  "displayName": "txn_month",
+                  "scale": {
+                    "type": "temporal"
+                  }
+                },
+                "y": {
+                  "fieldName": "measure(success_rate)",
+                  "displayName": "success_rate",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 8,
+            "y": 3,
+            "width": 4,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "data-scope-note",
+            "multilineTextboxSpec": {
+              "lines": [
+                "## Data Scope & Insights\n",
+                "\n",
+                "* **Customer KPIs** reflect **5,000 unique customers** from the Gold customer 360 view (customer-lifetime values, fully deduplicated after the P0-1 correction).\n",
+                "* **Channel trends** come from the Gold transaction channel summary and cover **2024-01-01 to 2025-02-27** (20,000 transactions across 6,148 date-gateway-device combinations).\n",
+                "* **Bank totals**: 5,000 customers, 5,500 accounts, 20,000 transactions across 5 branches — total account balance **₹1,393,539,114.15** and total transaction amount **₹1,003,452,288.93**.\n",
+                "* **Customer growth and deposit trends are not available** - the Gold layer contains no account-opening or balance-history dates.\n",
+                "* **Chennai Hub** holds 219 customers with ₹13.3M in recorded deposits and 52 transactions - the smallest branch, but no longer inactive."
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 9,
+            "width": 12,
+            "height": 3
+          }
+        }
+      ],
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layoutVersion": "GRID_V1"
+    },
+    {
+      "name": "7b3a0b20",
+      "displayName": "Customer Insights",
+      "layout": [
+        {
+          "widget": {
+            "name": "segment-distribution",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "customers_mv",
+                  "fields": [
+                    {
+                      "name": "measure(customer_count)",
+                      "expression": "MEASURE(`customer_count`)"
+                    },
+                    {
+                      "name": "customer_segment",
+                      "expression": "`customer_segment`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": "Customer Segment Distribution"
+              },
+              "version": 3,
+              "widgetType": "pie",
+              "encodings": {
+                "angle": {
+                  "fieldName": "measure(customer_count)",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "customer_count"
+                },
+                "color": {
+                  "fieldName": "customer_segment",
+                  "displayName": "customer_segment",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 6,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "risk-grade-distribution",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "customers_mv",
+                  "fields": [
+                    {
+                      "name": "measure(customer_count)",
+                      "expression": "MEASURE(`customer_count`)"
+                    },
+                    {
+                      "name": "risk_grade",
+                      "expression": "`risk_grade`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": "Risk Grade Distribution"
+              },
+              "version": 3,
+              "widgetType": "pie",
+              "encodings": {
+                "angle": {
+                  "fieldName": "measure(customer_count)",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "customer_count"
+                },
+                "color": {
+                  "fieldName": "risk_grade",
+                  "displayName": "risk_grade",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 0,
+            "width": 6,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "balance-bands",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "customers_mv",
+                  "fields": [
+                    {
+                      "name": "balance_band",
+                      "expression": "`balance_band`"
+                    },
+                    {
+                      "name": "measure(customer_count)",
+                      "expression": "MEASURE(`customer_count`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": "Customer Balance Distribution"
+              },
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "balance_band",
+                  "displayName": "balance_band",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                },
+                "y": {
+                  "fieldName": "measure(customer_count)",
+                  "displayName": "customer_count",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "color": {
+                  "fieldName": "balance_band",
+                  "displayName": "balance_band",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 6,
+            "width": 6,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "txn-by-segment",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "customers_mv",
+                  "fields": [
+                    {
+                      "name": "customer_segment",
+                      "expression": "`customer_segment`"
+                    },
+                    {
+                      "name": "measure(total_transactions)",
+                      "expression": "MEASURE(`total_transactions`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": {
+                  "value": "Transactions by Segment",
+                  "fields": []
+                }
+              },
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "customer_segment",
+                  "displayName": "customer_segment",
+                  "scale": {
+                    "type": "categorical",
+                    "sort": {
+                      "by": "y-reversed"
+                    }
+                  }
+                },
+                "y": {
+                  "fieldName": "measure(total_transactions)",
+                  "displayName": "total_transactions",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "color": {
+                  "fieldName": "customer_segment",
+                  "displayName": "customer_segment",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 6,
+            "width": 6,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "avg-txn-by-risk",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "customers_mv",
+                  "fields": [
+                    {
+                      "name": "risk_grade",
+                      "expression": "`risk_grade`"
+                    },
+                    {
+                      "name": "measure(avg_customer_transactions)",
+                      "expression": "MEASURE(`avg_customer_transactions`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": "Avg Transactions per Customer by Risk Grade"
+              },
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "risk_grade",
+                  "displayName": "risk_grade",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                },
+                "y": {
+                  "fieldName": "measure(avg_customer_transactions)",
+                  "displayName": "avg_customer_transactions",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "color": {
+                  "fieldName": "risk_grade",
+                  "displayName": "risk_grade",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 12,
+            "width": 6,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "high-risk-by-segment",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "customers_mv",
+                  "fields": [
+                    {
+                      "name": "customer_segment",
+                      "expression": "`customer_segment`"
+                    },
+                    {
+                      "name": "measure(high_risk_customers)",
+                      "expression": "MEASURE(`high_risk_customers`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": {
+                  "value": "High-Risk Customers by Segment",
+                  "fields": []
+                }
+              },
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "customer_segment",
+                  "displayName": "customer_segment",
+                  "scale": {
+                    "type": "categorical",
+                    "sort": {
+                      "by": "y-reversed"
+                    }
+                  }
+                },
+                "y": {
+                  "fieldName": "measure(high_risk_customers)",
+                  "displayName": "high_risk_customers",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "color": {
+                  "fieldName": "customer_segment",
+                  "displayName": "customer_segment",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 12,
+            "width": 6,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "top-customers",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "top_customers_mv",
+                  "fields": [
+                    {
+                      "name": "customer_name",
+                      "expression": "`customer_name`"
+                    },
+                    {
+                      "name": "customer_id",
+                      "expression": "`customer_id`"
+                    },
+                    {
+                      "name": "branch_name",
+                      "expression": "`branch_name`"
+                    },
+                    {
+                      "name": "risk_grade",
+                      "expression": "`risk_grade`"
+                    },
+                    {
+                      "name": "measure(total_balance)",
+                      "expression": "MEASURE(`total_balance`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": "Top 10 Customers by Balance"
+              },
+              "version": 2,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "customer_name"
+                  },
+                  {
+                    "fieldName": "customer_id"
+                  },
+                  {
+                    "fieldName": "branch_name"
+                  },
+                  {
+                    "fieldName": "risk_grade"
+                  },
+                  {
+                    "fieldName": "measure(total_balance)"
+                  }
+                ]
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 18,
+            "width": 12,
+            "height": 7
+          }
+        }
+      ],
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layoutVersion": "GRID_V1"
+    },
+    {
+      "name": "d0dc64fa",
+      "displayName": "Branch Performance",
+      "layout": [
+        {
+          "widget": {
+            "name": "branch-deposits",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "branch_perf_mv",
+                  "fields": [
+                    {
+                      "name": "branch_name",
+                      "expression": "`branch_name`"
+                    },
+                    {
+                      "name": "measure(deposits)",
+                      "expression": "MEASURE(`deposits`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": {
+                  "value": "Deposits by Branch",
+                  "fields": []
+                }
+              },
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "branch_name",
+                  "displayName": "branch_name",
+                  "scale": {
+                    "type": "categorical",
+                    "sort": {
+                      "by": "y-reversed"
+                    }
+                  }
+                },
+                "y": {
+                  "fieldName": "measure(deposits)",
+                  "displayName": "deposits",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "color": {
+                  "fieldName": "branch_name",
+                  "displayName": "branch_name",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 6,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "branch-customers",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "branch_perf_mv",
+                  "fields": [
+                    {
+                      "name": "branch_name",
+                      "expression": "`branch_name`"
+                    },
+                    {
+                      "name": "measure(customers)",
+                      "expression": "MEASURE(`customers`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": {
+                  "value": "Customers by Branch",
+                  "fields": []
+                }
+              },
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "branch_name",
+                  "displayName": "branch_name",
+                  "scale": {
+                    "type": "categorical",
+                    "sort": {
+                      "by": "y-reversed"
+                    }
+                  }
+                },
+                "y": {
+                  "fieldName": "measure(customers)",
+                  "displayName": "customers",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "color": {
+                  "fieldName": "branch_name",
+                  "displayName": "branch_name",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 0,
+            "width": 6,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "branch-transactions",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "branch_perf_mv",
+                  "fields": [
+                    {
+                      "name": "branch_name",
+                      "expression": "`branch_name`"
+                    },
+                    {
+                      "name": "measure(transactions)",
+                      "expression": "MEASURE(`transactions`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": {
+                  "value": "Transactions by Branch",
+                  "fields": []
+                }
+              },
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "branch_name",
+                  "displayName": "branch_name",
+                  "scale": {
+                    "type": "categorical",
+                    "sort": {
+                      "by": "y-reversed"
+                    }
+                  }
+                },
+                "y": {
+                  "fieldName": "measure(transactions)",
+                  "displayName": "transactions",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "color": {
+                  "fieldName": "branch_name",
+                  "displayName": "branch_name",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 6,
+            "width": 6,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "branch-avg-balance",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "branch_perf_mv",
+                  "fields": [
+                    {
+                      "name": "branch_name",
+                      "expression": "`branch_name`"
+                    },
+                    {
+                      "name": "measure(avg_customer_balance)",
+                      "expression": "MEASURE(`avg_customer_balance`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": {
+                  "value": "Avg Customer Balance by Branch",
+                  "fields": []
+                }
+              },
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "branch_name",
+                  "displayName": "branch_name",
+                  "scale": {
+                    "type": "categorical",
+                    "sort": {
+                      "by": "y-reversed"
+                    }
+                  }
+                },
+                "y": {
+                  "fieldName": "measure(avg_customer_balance)",
+                  "displayName": "avg_customer_balance",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "color": {
+                  "fieldName": "branch_name",
+                  "displayName": "branch_name",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 6,
+            "width": 6,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "branch-summary",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "branch_perf_mv",
+                  "fields": [
+                    {
+                      "name": "branch_name",
+                      "expression": "`branch_name`"
+                    },
+                    {
+                      "name": "measure(customers)",
+                      "expression": "MEASURE(`customers`)"
+                    },
+                    {
+                      "name": "measure(deposits)",
+                      "expression": "MEASURE(`deposits`)"
+                    },
+                    {
+                      "name": "measure(transactions)",
+                      "expression": "MEASURE(`transactions`)"
+                    },
+                    {
+                      "name": "measure(avg_customer_balance)",
+                      "expression": "MEASURE(`avg_customer_balance`)"
+                    },
+                    {
+                      "name": "measure(high_risk_customers)",
+                      "expression": "MEASURE(`high_risk_customers`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": "Branch Performance Summary"
+              },
+              "version": 2,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "branch_name"
+                  },
+                  {
+                    "fieldName": "measure(customers)"
+                  },
+                  {
+                    "fieldName": "measure(deposits)"
+                  },
+                  {
+                    "fieldName": "measure(transactions)"
+                  },
+                  {
+                    "fieldName": "measure(avg_customer_balance)"
+                  },
+                  {
+                    "fieldName": "measure(high_risk_customers)"
+                  }
+                ]
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 12,
+            "width": 12,
+            "height": 6
+          }
+        }
+      ],
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layoutVersion": "GRID_V1"
+    },
+    {
+      "name": "774b1b14",
+      "displayName": "Channel Performance",
+      "layout": [
+        {
+          "widget": {
+            "name": "gateway-volume",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "channel_mv",
+                  "fields": [
+                    {
+                      "name": "measure(total_transactions)",
+                      "expression": "MEASURE(`total_transactions`)"
+                    },
+                    {
+                      "name": "gateway_name",
+                      "expression": "`gateway_name`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": "Volume Share by Gateway"
+              },
+              "version": 3,
+              "widgetType": "pie",
+              "encodings": {
+                "angle": {
+                  "fieldName": "measure(total_transactions)",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "total_transactions"
+                },
+                "color": {
+                  "fieldName": "gateway_name",
+                  "displayName": "gateway_name",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 8,
+            "y": 0,
+            "width": 4,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "gateway-success-rate",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "channel_mv",
+                  "fields": [
+                    {
+                      "name": "gateway_name",
+                      "expression": "`gateway_name`"
+                    },
+                    {
+                      "name": "measure(success_rate)",
+                      "expression": "MEASURE(`success_rate`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": {
+                  "value": "Success Rate by Gateway",
+                  "fields": []
+                }
+              },
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "gateway_name",
+                  "displayName": "gateway_name",
+                  "scale": {
+                    "type": "categorical",
+                    "sort": {
+                      "by": "y-reversed"
+                    }
+                  }
+                },
+                "y": {
+                  "fieldName": "measure(success_rate)",
+                  "displayName": "success_rate",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "color": {
+                  "fieldName": "gateway_name",
+                  "displayName": "gateway_name",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 6,
+            "width": 4,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "gateway-failure-rate",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "channel_mv",
+                  "fields": [
+                    {
+                      "name": "gateway_name",
+                      "expression": "`gateway_name`"
+                    },
+                    {
+                      "name": "measure(failure_rate)",
+                      "expression": "MEASURE(`failure_rate`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": {
+                  "value": "Failure Rate by Gateway",
+                  "fields": []
+                }
+              },
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "gateway_name",
+                  "displayName": "gateway_name",
+                  "scale": {
+                    "type": "categorical",
+                    "sort": {
+                      "by": "y-reversed"
+                    }
+                  }
+                },
+                "y": {
+                  "fieldName": "measure(failure_rate)",
+                  "displayName": "failure_rate",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "color": {
+                  "fieldName": "gateway_name",
+                  "displayName": "gateway_name",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 4,
+            "y": 6,
+            "width": 4,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "gateway-processing-time",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "channel_mv",
+                  "fields": [
+                    {
+                      "name": "gateway_name",
+                      "expression": "`gateway_name`"
+                    },
+                    {
+                      "name": "measure(avg_processing_time_ms)",
+                      "expression": "MEASURE(`avg_processing_time_ms`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": "Avg Processing Time by Gateway"
+              },
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "gateway_name",
+                  "displayName": "gateway_name",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                },
+                "y": {
+                  "fieldName": "measure(avg_processing_time_ms)",
+                  "displayName": "avg_processing_time_ms",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "color": {
+                  "fieldName": "gateway_name",
+                  "displayName": "gateway_name",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 8,
+            "y": 6,
+            "width": 4,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "device-distribution",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "channel_mv",
+                  "fields": [
+                    {
+                      "name": "measure(total_transactions)",
+                      "expression": "MEASURE(`total_transactions`)"
+                    },
+                    {
+                      "name": "device_type",
+                      "expression": "`device_type`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": "Transactions by Device Type"
+              },
+              "version": 3,
+              "widgetType": "pie",
+              "encodings": {
+                "angle": {
+                  "fieldName": "measure(total_transactions)",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "total_transactions"
+                },
+                "color": {
+                  "fieldName": "device_type",
+                  "displayName": "device_type",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 12,
+            "width": 6,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "gateway-monthly-trend",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "channel_mv",
+                  "fields": [
+                    {
+                      "name": "gateway_name",
+                      "expression": "`gateway_name`"
+                    },
+                    {
+                      "name": "txn_month",
+                      "expression": "`txn_month`"
+                    },
+                    {
+                      "name": "measure(total_transactions)",
+                      "expression": "MEASURE(`total_transactions`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": "Monthly Volume by Gateway"
+              },
+              "version": 3,
+              "widgetType": "line",
+              "encodings": {
+                "x": {
+                  "fieldName": "txn_month",
+                  "displayName": "txn_month",
+                  "scale": {
+                    "type": "temporal"
+                  }
+                },
+                "y": {
+                  "fieldName": "measure(total_transactions)",
+                  "displayName": "total_transactions",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "color": {
+                  "fieldName": "gateway_name",
+                  "displayName": "gateway_name",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 12,
+            "width": 6,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "gateway-success-failure",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "channel_mv",
+                  "fields": [
+                    {
+                      "name": "gateway_name",
+                      "expression": "`gateway_name`"
+                    },
+                    {
+                      "name": "measure(successful_transactions)",
+                      "expression": "MEASURE(`successful_transactions`)"
+                    },
+                    {
+                      "name": "measure(failed_transactions)",
+                      "expression": "MEASURE(`failed_transactions`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": "Gateway Success vs Failure"
+              },
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "gateway_name",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                },
+                "y": {
+                  "fields": [
+                    {
+                      "fieldName": "measure(successful_transactions)",
+                      "displayName": "successful_transactions"
+                    },
+                    {
+                      "fieldName": "measure(failed_transactions)",
+                      "displayName": "failed_transactions"
+                    }
+                  ],
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 8,
+            "height": 6
+          }
+        }
+      ],
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layoutVersion": "GRID_V1"
+    },
+    {
+      "name": "txn_risk",
+      "displayName": "Transaction & Risk Analysis",
+      "layout": [
+        {
+          "widget": {
+            "name": "monthly-failure-rate",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "channel_mv",
+                  "fields": [
+                    {
+                      "name": "txn_month",
+                      "expression": "`txn_month`"
+                    },
+                    {
+                      "name": "measure(failure_rate)",
+                      "expression": "MEASURE(`failure_rate`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": "Monthly Failure Rate"
+              },
+              "version": 3,
+              "widgetType": "line",
+              "encodings": {
+                "x": {
+                  "fieldName": "txn_month",
+                  "displayName": "txn_month",
+                  "scale": {
+                    "type": "temporal"
+                  }
+                },
+                "y": {
+                  "fieldName": "measure(failure_rate)",
+                  "displayName": "failure_rate",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 8,
+            "y": 0,
+            "width": 4,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "failed-by-device",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "channel_mv",
+                  "fields": [
+                    {
+                      "name": "device_type",
+                      "expression": "`device_type`"
+                    },
+                    {
+                      "name": "measure(failed_transactions)",
+                      "expression": "MEASURE(`failed_transactions`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": {
+                  "value": "Failed Transactions by Device",
+                  "fields": []
+                }
+              },
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "device_type",
+                  "displayName": "device_type",
+                  "scale": {
+                    "type": "categorical",
+                    "sort": {
+                      "by": "y-reversed"
+                    }
+                  }
+                },
+                "y": {
+                  "fieldName": "measure(failed_transactions)",
+                  "displayName": "failed_transactions",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "color": {
+                  "fieldName": "device_type",
+                  "displayName": "device_type",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 6,
+            "width": 6,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "failure-rate-by-device",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "channel_mv",
+                  "fields": [
+                    {
+                      "name": "device_type",
+                      "expression": "`device_type`"
+                    },
+                    {
+                      "name": "measure(failure_rate)",
+                      "expression": "MEASURE(`failure_rate`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": {
+                  "value": "Failure Rate by Device",
+                  "fields": []
+                }
+              },
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "device_type",
+                  "displayName": "device_type",
+                  "scale": {
+                    "type": "categorical",
+                    "sort": {
+                      "by": "y-reversed"
+                    }
+                  }
+                },
+                "y": {
+                  "fieldName": "measure(failure_rate)",
+                  "displayName": "failure_rate",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "color": {
+                  "fieldName": "device_type",
+                  "displayName": "device_type",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 6,
+            "width": 6,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "txn-by-risk",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "customers_mv",
+                  "fields": [
+                    {
+                      "name": "risk_grade",
+                      "expression": "`risk_grade`"
+                    },
+                    {
+                      "name": "measure(total_transactions)",
+                      "expression": "MEASURE(`total_transactions`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": {
+                  "value": "Total Transactions by Risk Grade",
+                  "fields": []
+                }
+              },
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "risk_grade",
+                  "displayName": "risk_grade",
+                  "scale": {
+                    "type": "categorical",
+                    "sort": {
+                      "by": "y-reversed"
+                    }
+                  }
+                },
+                "y": {
+                  "fieldName": "measure(total_transactions)",
+                  "displayName": "total_transactions",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "color": {
+                  "fieldName": "risk_grade",
+                  "displayName": "risk_grade",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 12,
+            "width": 6,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "high-risk-by-branch",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "branch_perf_mv",
+                  "fields": [
+                    {
+                      "name": "branch_name",
+                      "expression": "`branch_name`"
+                    },
+                    {
+                      "name": "measure(high_risk_customers)",
+                      "expression": "MEASURE(`high_risk_customers`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": {
+                  "value": "High-Risk Customers by Branch",
+                  "fields": []
+                }
+              },
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "branch_name",
+                  "displayName": "branch_name",
+                  "scale": {
+                    "type": "categorical",
+                    "sort": {
+                      "by": "y-reversed"
+                    }
+                  }
+                },
+                "y": {
+                  "fieldName": "measure(high_risk_customers)",
+                  "displayName": "high_risk_customers",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "color": {
+                  "fieldName": "branch_name",
+                  "displayName": "branch_name",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 12,
+            "width": 6,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "monthly-succ-fail",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "channel_mv",
+                  "fields": [
+                    {
+                      "name": "txn_month",
+                      "expression": "`txn_month`"
+                    },
+                    {
+                      "name": "measure(successful_transactions)",
+                      "expression": "MEASURE(`successful_transactions`)"
+                    },
+                    {
+                      "name": "measure(failed_transactions)",
+                      "expression": "MEASURE(`failed_transactions`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": "Monthly Successful vs Failed Transactions"
+              },
+              "version": 3,
+              "widgetType": "line",
+              "encodings": {
+                "x": {
+                  "fieldName": "txn_month",
+                  "scale": {
+                    "type": "temporal"
+                  }
+                },
+                "y": {
+                  "fields": [
+                    {
+                      "fieldName": "measure(successful_transactions)",
+                      "displayName": "successful_transactions"
+                    },
+                    {
+                      "fieldName": "measure(failed_transactions)",
+                      "displayName": "failed_transactions"
+                    }
+                  ],
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 8,
+            "height": 6
+          }
+        }
+      ],
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layoutVersion": "GRID_V1"
+    },
+    {
+      "name": "global_filters",
+      "displayName": "Global Filters",
+      "layout": [
+        {
+          "widget": {
+            "name": "risk-filter",
+            "queries": [
+              {
+                "name": "dashboards/01f1d74574d516cf95f4d5d6e556a50d/datasets/01f1d74ef11b10cdbb6de3c501200b59_risk_grade",
+                "query": {
+                  "datasetName": "customers_mv",
+                  "fields": [
+                    {
+                      "name": "risk_grade",
+                      "expression": "`risk_grade`"
+                    },
+                    {
+                      "name": "risk_grade_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "showTitle": true,
+                "title": "Risk Grade"
+              },
+              "widgetType": "filter-multi-select",
+              "encodings": {
+                "fields": [
+                  {
+                    "fieldName": "risk_grade",
+                    "queryName": "dashboards/01f1d74574d516cf95f4d5d6e556a50d/datasets/01f1d74ef11b10cdbb6de3c501200b59_risk_grade"
+                  }
+                ]
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 3,
+            "height": 1
+          }
+        },
+        {
+          "widget": {
+            "name": "segment-filter",
+            "queries": [
+              {
+                "name": "dashboards/01f1d74574d516cf95f4d5d6e556a50d/datasets/01f1d74ef11b10cdbb6de3c501200b59_customer_segment",
+                "query": {
+                  "datasetName": "customers_mv",
+                  "fields": [
+                    {
+                      "name": "customer_segment",
+                      "expression": "`customer_segment`"
+                    },
+                    {
+                      "name": "customer_segment_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "showTitle": true,
+                "title": "Customer Segment"
+              },
+              "widgetType": "filter-multi-select",
+              "encodings": {
+                "fields": [
+                  {
+                    "fieldName": "customer_segment",
+                    "queryName": "dashboards/01f1d74574d516cf95f4d5d6e556a50d/datasets/01f1d74ef11b10cdbb6de3c501200b59_customer_segment"
+                  }
+                ]
+              }
+            }
+          },
+          "position": {
+            "x": 3,
+            "y": 0,
+            "width": 3,
+            "height": 1
+          }
+        },
+        {
+          "widget": {
+            "name": "gateway-filter",
+            "queries": [
+              {
+                "name": "dashboards/01f1d74574d516cf95f4d5d6e556a50d/datasets/01f1d74ef22c1bf9b5f93d9cb6837acc_gateway_name",
+                "query": {
+                  "datasetName": "channel_mv",
+                  "fields": [
+                    {
+                      "name": "gateway_name",
+                      "expression": "`gateway_name`"
+                    },
+                    {
+                      "name": "gateway_name_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "showTitle": true,
+                "title": "Payment Gateway"
+              },
+              "widgetType": "filter-multi-select",
+              "encodings": {
+                "fields": [
+                  {
+                    "fieldName": "gateway_name",
+                    "queryName": "dashboards/01f1d74574d516cf95f4d5d6e556a50d/datasets/01f1d74ef22c1bf9b5f93d9cb6837acc_gateway_name"
+                  }
+                ]
+              }
+            }
+          },
+          "position": {
+            "x": 9,
+            "y": 0,
+            "width": 3,
+            "height": 1
+          }
+        },
+        {
+          "widget": {
+            "name": "branch-filter",
+            "queries": [
+              {
+                "name": "dashboards/01f1d74574d516cf95f4d5d6e556a50d/datasets/01f1d74ef11b10cdbb6de3c501200b59_branch_name",
+                "query": {
+                  "datasetName": "customers_mv",
+                  "fields": [
+                    {
+                      "name": "branch_name",
+                      "expression": "`branch_name`"
+                    },
+                    {
+                      "name": "branch_name_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "dashboards/01f1d74574d516cf95f4d5d6e556a50d/datasets/01f1d74ef1d71e8a92d32f7067c86a77_branch_name",
+                "query": {
+                  "datasetName": "branch_perf_mv",
+                  "fields": [
+                    {
+                      "name": "branch_name",
+                      "expression": "`branch_name`"
+                    },
+                    {
+                      "name": "branch_name_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "showTitle": true,
+                "title": "Branch"
+              },
+              "widgetType": "filter-multi-select",
+              "encodings": {
+                "fields": [
+                  {
+                    "fieldName": "branch_name",
+                    "queryName": "dashboards/01f1d74574d516cf95f4d5d6e556a50d/datasets/01f1d74ef11b10cdbb6de3c501200b59_branch_name"
+                  },
+                  {
+                    "fieldName": "branch_name",
+                    "queryName": "dashboards/01f1d74574d516cf95f4d5d6e556a50d/datasets/01f1d74ef1d71e8a92d32f7067c86a77_branch_name"
+                  }
+                ]
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 0,
+            "width": 3,
+            "height": 1
+          }
+        }
+      ],
+      "pageType": "PAGE_TYPE_GLOBAL_FILTERS",
+      "layoutVersion": "GRID_V1"
+    }
+  ],
+  "uiSettings": {
+    "theme": {
+      "widgetHeaderAlignment": "ALIGNMENT_UNSPECIFIED"
+    },
+    "applyModeEnabled": false
+  }
+}

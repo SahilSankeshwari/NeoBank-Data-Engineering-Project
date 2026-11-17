@@ -82,7 +82,7 @@ Five Gold analytics tables — a 360° customer view, branch performance, daily 
 | 11 | Per-run, per-table audit logging | ✅ / 🟡 | `metadata.pipeline_runs` |
 | 12 | Five Gold analytical data marts | ✅ / 🟡 | `gold_transformation/` notebooks |
 | 13 | Email notifications (Gmail SMTP, HTML audit table) | ✅ / 🟡 | `01_Send_Email` |
-| 14 | Databricks AI/BI Dashboard | ✅ (exists in workspace) / ⏳ export pending | `dashboards/PLACEHOLDER.md` |
+| 14 | Databricks AI/BI Dashboard | ✅ definition exported & committed (validated 17 Nov 2026) | `dashboards/NeoBank_Dashboard.lvdash.json` |
 | 15 | Fail-fast parameter validation (run_id numeric, catalog present) | 🟡 | all parameterized notebooks |
 | 16 | Production job orchestration (4 jobs) | ✅ in workspace / ⏳ not captured in this repo | see [Section 14](#14-pipeline-execution-flow) |
 
@@ -135,7 +135,7 @@ flowchart TB
         G5[risk_customer_summary]
     end
 
-    DASH["Databricks AI/BI Dashboard<br/>(NeoBank_Dashboard — export pending)"]
+    DASH["Databricks AI/BI Dashboard<br/>(NeoBank_Dashboard — definition exported to repo)"]
     MAIL["Audit summary email<br/>(Gmail SMTP)"]
 
     PG -->|"JDBC · watermark-filtered"| BRZ
@@ -169,7 +169,9 @@ NeoBank-Data-Engineering-Project/
 ├── config/
 │   └── config.example.json           # placeholder-only environment template
 ├── docs/
-│   └── EXCLUSIONS.md                 # what is intentionally NOT committed, and why
+│   ├── EXCLUSIONS.md                 # what is intentionally NOT committed, and why
+│   ├── VALIDATION_REPORT.md          # end-to-end read-only validation (17 Nov 2026)
+│   └── DASHBOARD_IMPORT_GUIDE.md    # how to import the dashboard into another workspace
 ├── notebooks/
 │   ├── admin/
 │   │   └── 00_Secrets_Admin.ipynb    # one-time, manual secret-scope setup (getpass; never printed)
@@ -194,7 +196,7 @@ NeoBank-Data-Engineering-Project/
 │   └── source_ddl/
 │       └── 01_Create_Tables.sql     # reference DDL — SQL Server/T-SQL dialect (see warning inside)
 └── dashboards/
-    └── PLACEHOLDER.md               # dashboard JSON export is PENDING
+    └── NeoBank_Dashboard.lvdash.json  # exported AI/BI dashboard definition (verified byte-identical)
 ```
 
 ### The 13 Notebooks
@@ -229,8 +231,10 @@ Four operational tables in the `banking` schema of a Neon PostgreSQL database, r
 | --- | --- | --- | --- | --- | --- |
 | `banking.customers` | `customer_id` | `updated_at` | MERGE | `banking.bronze.customers` | `banking.silver.customers` |
 | `banking.accounts` | `account_id` | `updated_at` | MERGE | `banking.bronze.accounts` | `banking.silver.accounts` |
-| `banking.transactions` | `txn_id` | `txn_timestamp` | APPEND | `banking.bronze.transactions` | `banking.silver.transactions` |
+| `banking.transactions` | `txn_id` | `txn_timestamp` | MERGE | `banking.bronze.transactions` | `banking.silver.transactions` |
 | `banking.branches` | `branch_code` | — (full load) | FULL | `banking.bronze.branches` | `banking.silver.branches` |
+
+> **Note (live configuration):** the production `metadata.table_parameters` registers `transactions` as **MERGE** (verified 17 Nov 2026, consistent with `silver.transactions` Delta history). The `01_Setup_Metadata` seed still inserts `APPEND` for this table — a known metadata drift; see `docs/VALIDATION_REPORT.md` (check #17).
 
 Key columns (verified against the live source schema):
 
@@ -475,7 +479,7 @@ Steps marked **[manual]** are done by you in the UI/CLI; steps marked **[noteboo
 11. **Execute in order [notebook/job]** — one full cycle: `01_Read_Tables_List` → per table: `02_Read_Table_Parameters` → `03_Source_to_Bronze` → `04_Bronze_to_Silver` → per gold table: `01_Silver_to_Gold_Driver` → `01_Send_Email`. Manual runs must supply a **unique numeric `run_id`** and all parameters above.
 12. **Validate Bronze, Silver, Gold [manual]** — count checks per [Section 15](#15-data-validation-and-testing); e.g. `SELECT COUNT(*) FROM banking.silver.customers;` vs source row counts.
 13. **Verify audit and email [manual]** — `SELECT * FROM banking.metadata.pipeline_runs WHERE run_id = <your run_id>;` — all rows should be `SUCCESS` with row counts, and the notification email should arrive.
-14. **Connect the dashboard [manual]** — create/point a Databricks AI/BI dashboard at the five `banking.gold.*` tables. ⚠️ This repository does **not** contain the dashboard definition (export pending — see [Section 16](#16-dashboard)); it cannot be recreated automatically from this repo.
+14. **Connect the dashboard [manual]** — the dashboard definition is included at [`dashboards/NeoBank_Dashboard.lvdash.json`](dashboards/NeoBank_Dashboard.lvdash.json): import it by following [`docs/DASHBOARD_IMPORT_GUIDE.md`](docs/DASHBOARD_IMPORT_GUIDE.md). It queries `banking.gold.customer_360` and `banking.gold.transaction_channel_summary`, which must exist and be populated first.
 
 ---
 
@@ -559,9 +563,11 @@ Unit tests for the dedup window logic, watermark-boundary MERGE behavior, late-a
 
 The **NeoBank_Dashboard** is a Databricks AI/BI dashboard built on the Gold marts:
 
-* **Purpose:** executive/operational views of customers, branches, channels, daily KPIs, and risk.
-* **Data sources:** the `banking.gold.*` tables only — it contains no credentials or PII beyond the Gold data.
-* **Status:** the dashboard exists in the source workspace (6 pages, 4 datasets — 🔬 page-level details would need verification). ⚠️ Its `.lvdash.json` export is **PENDING**; this repository contains only `dashboards/PLACEHOLDER.md`. It **cannot be recreated automatically** from this repository — after exporting, commit the JSON here (it is safe: gold-table references only).
+* **Purpose:** executive/operational views of customers, branches, channels, and risk.
+* **Data sources:** `banking.gold.customer_360` (directly, plus the derived branch metrics) and `banking.gold.transaction_channel_summary` — no credentials or PII beyond the Gold data. (`daily_bank_kpi` and `risk_customer_summary` are not used by the dashboard — verified 17 Nov 2026.)
+* **Status:** ✅ the dashboard definition **is exported and committed** at [`dashboards/NeoBank_Dashboard.lvdash.json`](dashboards/NeoBank_Dashboard.lvdash.json) — verified byte-identical to the source-workspace dashboard on 17 Nov 2026, with a clean secret scan. It contains 4 datasets, 6 pages, and 36 widgets including all filters, measures, and layout.
+* **Recreate/import it:** follow [`docs/DASHBOARD_IMPORT_GUIDE.md`](docs/DASHBOARD_IMPORT_GUIDE.md). Prerequisites: the `banking` catalog with `gold.customer_360` and `gold.transaction_channel_summary` populated.
+* **Validation evidence:** all 4 dataset queries executed successfully — see [`docs/VALIDATION_REPORT.md`](docs/VALIDATION_REPORT.md).
 
 ---
 
@@ -579,7 +585,7 @@ The **NeoBank_Dashboard** is a Databricks AI/BI dashboard built on the Gold mart
 3. **Legacy `source_system='sqlserver'` label** — the registry and `03`'s JDBC branch use `sqlserver`, but the actual database is Neon PostgreSQL. Renaming must happen atomically in `metadata.tables` + the master job parameter + `03`'s branch condition (⏳ pending).
 4. **Gold runs even when ingestion failed** — the master job triggers Silver-to-Gold with `run_if: ALL_DONE`, so gold marts rebuild from stale Silver after a failed ingestion (production hardening item, unchanged here).
 5. **Job parameter wiring gap** — the production jobs do **not** yet pass the new parameters (`catalog_name`, `neon_host/port/database`, `volume_base`, `sender_email`, `recipient_email`); their `run_id` defaults (`5678`, `8901`) still hold historical values. Until the jobs are rewired, the repo's copies fail-fast on missing parameters rather than silently using stale defaults — by design, but it means **the copies are not runnable from the current jobs as-is** (⏳).
-6. **Dashboard export missing** — `.lvdash.json` not yet committed (⏳).
+6. **Dashboard export** — ✅ resolved 17 Nov 2026: the `.lvdash.json` definition is committed at `dashboards/NeoBank_Dashboard.lvdash.json` (verified byte-identical; import guide in `docs/DASHBOARD_IMPORT_GUIDE.md`).
 7. **T-SQL reference DDL** — `sql/source_ddl/01_Create_Tables.sql` is SQL Server dialect, not executable on Neon PostgreSQL (translation guide in the file header). No PostgreSQL-native DDL is included yet.
 8. **Hardcoded catalog in two places** — `01_Setup_Metadata` and the five gold transformation notebooks hardcode `banking` (the gold driver passes no arguments through `dbutils.notebook.run`).
 9. **Bronze retention** — Bronze is append-only with no retention/compaction policy.
@@ -603,14 +609,14 @@ See [Section 19](#19-future-enhancements).
 
 ## 19. Future Enhancements
 
-*All items below are proposals — none is implemented.*
+*All items below are proposals unless explicitly marked done.*
 
 1. **Data-quality framework** — row-level expectations (not-null, range, referential) at Silver ingestion with quarantine of rejected records.
 2. **Retry & failure recovery** — automatic per-table retries and a backfill mode that safely re-reads a watermark window.
 3. **Better late-arriving data handling** — periodic full-reconciliation MERGE from source to Silver to catch sub-watermark corrections.
 4. **Job-level alerting** — SQL alerts on `pipeline_runs` (e.g. any `FAILED` in the last hour) in addition to the email.
 5. **CI/CD with Declarative Automation Bundles** — capture the 4 jobs, the catalog, and pipelines as code with `dev`/`prod` targets (the recommended replacement for the manual job rewiring).
-6. **Dashboard version control** — commit the `.lvdash.json` export so the dashboard is reproducible.
+6. **Dashboard version control** — ✅ done: the `.lvdash.json` export is committed; keep it in sync if the dashboard changes.
 7. **Automated testing** — the validation queries in [Section 15](#15-data-validation-and-testing) as scheduled checks or a test harness for the dedup/watermark/MERGE logic.
 8. **Observability** — per-table SLA freshness checks (e.g. `last_updated_at` in `table_watermarks`) and a lineage-annotated run book.
 
